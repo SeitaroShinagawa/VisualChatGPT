@@ -3,6 +3,7 @@
 
 # coding: utf-8
 import os
+import sys
 import gradio as gr
 import random
 import torch
@@ -133,6 +134,48 @@ VISUAL_CHATGPT_SUFFIX_CN = """你对文件名的正确性非常严格，而且�
 
 新输入: {input}
 Thought: Do I need to use a tool? {agent_scratchpad}
+"""
+
+VISUAL_CHATGPT_PREFIX_JP = """Visual ChatGPTは、単純な質問の回答から広範なトピックについての詳細な説明やディスカッションまで、テキストと視覚に関連した多岐にわたるタスクをサポートするように設計されています。Visual ChatGPTは、受け取った入力に基づいて人間らしいテキストを生成することができ、自然な会話を行い、話題に関連した一貫したレスポンスを提供することができます。
+
+Visual ChatGPTは大量のテキストと画像を処理し理解することができます。言語モデルとして、Visual ChatGPTは直接画像を読み取ることはできませんが、様々な視覚タスクを完了するためのツール一覧を持っています。各画像には "image/xxx.png" のようなファイル名が付けられ、Visual ChatGPTはそれぞれのツールを使って画像を間接的に理解します。画像について話す際、Visual ChatGPTはファイル名に非常に厳しく、存在しないファイルを捏造することはありません。新しい画像ファイルを生成するためのツールを使用する際も、画像がユーザーの要求と一致しない可能性があることを理解し、実際の画像を観察するための他の視覚的な質問応答ツールや記述ツールを使用します。Visual ChatGPTはツールを一連の手順で使用し、画像の内容や画像ファイル名を偽ることなく、ツールの観察結果に忠実です。新しい画像が生成された場合、最後のツールの観察からファイル名を提供することを忘れません。
+
+ユーザーはVisual ChatGPTに説明付きの新しい画像を提供することができます。その説明はVisual ChatGPTが画像を理解するのを助けますが、Visual ChatGPTは次のタスクを完成させるためにツールを使用するべきで、説明から直接想像するべきではありません。
+
+全体として、Visual ChatGPTは多岐にわたるタスクをサポートし、広範なトピックに関する価値ある洞察と情報を提供することができる強力な視覚対話支援ツールです。
+
+ツール:
+Visual ChatGPTは以下のツールにアクセスできます:"""
+
+VISUAL_CHATGPT_FORMAT_INSTRUCTIONS_JP = """ツールを使用するには、以下のフォーマットを使用してください：
+
+```
+Thought: ツールを使用する必要がありますか？ Yes
+Action: 実行するアクション、[{tool_names}]のうちの一つであるべき
+Action Input: アクションへの入力
+Observation: アクションの結果
+```
+
+人間に返答するレスポンスがある場合、またはツールを使用する必要がない場合は、以下のフォーマットを使用する必要があります：
+
+```
+Thought: ツールを使用する必要がありますか？ No
+{ai_prefix}: [ここにあなたのレスポンス]
+```
+"""
+
+VISUAL_CHATGPT_SUFFIX_JP = """あなたはファイル名の正確さに非常に厳しく、存在しないファイル名を決して偽造しません。
+最後のツールの観察で提供された場合、画像のファイル名を忠実に提供することを覚えておくべきです。
+
+始めましょう！
+
+以前の会話履歴：
+{chat_history}
+
+新しい入力：{input}
+Visual ChatGPTはテキスト言語モデルであるため、Visual ChatGPTは画像を観察するためにツールを使用しなければならず、想像力を使うことはできません。
+考えと観察はVisual ChatGPTだけが見ることができ、最終的な応答で重要な情報をユーザーに繰り返すことを覚えておくべきです。
+Thought: ツールを使用する必要がありますか？ {agent_scratchpad} ステップバイステップで考えましょう。
 """
 
 os.makedirs('image', exist_ok=True)
@@ -1500,6 +1543,10 @@ class ConversationBot:
             PREFIX, FORMAT_INSTRUCTIONS, SUFFIX = VISUAL_CHATGPT_PREFIX, VISUAL_CHATGPT_FORMAT_INSTRUCTIONS, VISUAL_CHATGPT_SUFFIX
             place = "Enter text and press enter, or upload an image"
             label_clear = "Clear"
+        elif lang=='Japanese':
+            PREFIX, FORMAT_INSTRUCTIONS, SUFFIX = VISUAL_CHATGPT_PREFIX_JP, VISUAL_CHATGPT_FORMAT_INSTRUCTIONS_JP, VISUAL_CHATGPT_SUFFIX_JP
+            place = "テキストを入力してEnterキーを押すか、画像をアップロードしてください"
+            label_clear = "クリア"
         else:
             PREFIX, FORMAT_INSTRUCTIONS, SUFFIX = VISUAL_CHATGPT_PREFIX_CN, VISUAL_CHATGPT_FORMAT_INSTRUCTIONS_CN, VISUAL_CHATGPT_SUFFIX_CN
             place = "输入文字并回车，或者上传图片"
@@ -1521,8 +1568,8 @@ class ConversationBot:
         res['output'] = res['output'].replace("\\", "/")
         response = re.sub('(image/[-\w]*.png)', lambda m: f'![](file={m.group(0)})*{m.group(0)}*', res['output'])
         state = state + [(text, response)]
-        print(f"\nProcessed run_text, Input text: {text}\nCurrent state: {state}\n"
-              f"Current Memory: {self.agent.memory.buffer}")
+        print(f"\nProcessed run_text, Input text: {text}\nCurrent state: {state}\n----------\n"
+              f"【Current Memory】: {self.agent.memory.buffer}")
         return state, state
 
     def run_image(self, image, state, txt, lang):
@@ -1542,17 +1589,48 @@ class ConversationBot:
         if lang == 'Chinese':
             Human_prompt = f'\nHuman: 提供一张名为 {image_filename}的图片。它的描述是: {description}。 这些信息帮助你理解这个图像，但是你应该使用工具来完成下面的任务，而不是直接从我的描述中想象。 如果你明白了, 说 \"收到\". \n'
             AI_prompt = "收到。  "
+        elif lang == 'Japanese':
+            Human_prompt = f'\nHuman: {image_filename}という名前の画像を提供しました。説明文は次の通りです: {description}。 この情報はあなたの画像理解の助けとなりますが、私の説明文から直接想像するのではなく、道具を使って以下の作業を行ってください。理解したら \"受理しました\"と答えてください. \n'
+            AI_prompt = "受理しました。  "
         else:
             Human_prompt = f'\nHuman: provide a figure named {image_filename}. The description is: {description}. This information helps you to understand this image, but you should use tools to finish following tasks, rather than directly imagine from my description. If you understand, say \"Received\". \n'
             AI_prompt = "Received.  "
         self.agent.memory.buffer = self.agent.memory.buffer + Human_prompt + 'AI: ' + AI_prompt
         state = state + [(f"![](file={image_filename})*{image_filename}*", AI_prompt)]
-        print(f"\nProcessed run_image, Input image: {image_filename}\nCurrent state: {state}\n"
-              f"Current Memory: {self.agent.memory.buffer}")
+        print(f"\nProcessed run_image, Input image: {image_filename}\nCurrent state: {state}\n----------\n"
+              f"【Current Memory】: {self.agent.memory.buffer}")
         return state, state, f'{txt} {image_filename} '
+
+class Logger:
+    """
+    logging in app's textbox
+    cite:
+    https://github.com/gradio-app/gradio/issues/2362#issuecomment-1424446778
+    """
+    def __init__(self, filename):
+        self.terminal = sys.stdout
+        self.log = open(filename, "w")
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+        
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
+        
+    def isatty(self):
+        return False 
+
+def read_logs():
+    sys.stdout.flush()
+    with open("output.log", "r") as f:
+        return f.read()
 
 
 if __name__ == '__main__':
+    sys.stdout = Logger("output.log")
+
     if not os.path.exists("checkpoints"):
         os.mkdir("checkpoints")
     parser = argparse.ArgumentParser()
@@ -1561,9 +1639,12 @@ if __name__ == '__main__':
     load_dict = {e.split('_')[0].strip(): e.split('_')[1].strip() for e in args.load.split(',')}
     bot = ConversationBot(load_dict=load_dict)
     with gr.Blocks(css="#chatbot .overflow-y-auto{height:500px}") as demo:
-        lang = gr.Radio(choices = ['Chinese','English'], value=None, label='Language')
+        lang = gr.Radio(choices = ['Chinese','English','Japanese'], value=None, label='Language')
         chatbot = gr.Chatbot(elem_id="chatbot", label="Visual ChatGPT")
         state = gr.State([])
+        with gr.Row() as log_view:
+            logs = gr.Textbox(label="Logs", default="Logs will be shown here", lines=20, readonly=True, style={"overflow-y": "auto"})
+            demo.load(read_logs, None, logs, every=1)
         with gr.Row(visible=False) as input_raws:
             with gr.Column(scale=0.7):
                 txt = gr.Textbox(show_label=False, placeholder="Enter text and press enter, or upload an image").style(
@@ -1580,4 +1661,5 @@ if __name__ == '__main__':
         clear.click(bot.memory.clear)
         clear.click(lambda: [], None, chatbot)
         clear.click(lambda: [], None, state)
-    demo.launch(server_name="0.0.0.0", server_port=7861)
+    demo.queue()
+    demo.launch(server_name="0.0.0.0", server_port=7861, share=True)
