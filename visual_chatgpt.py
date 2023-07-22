@@ -16,6 +16,7 @@ import numpy as np
 import argparse
 import inspect
 import tempfile
+import ansiconv
 from transformers import CLIPSegProcessor, CLIPSegForImageSegmentation
 from transformers import pipeline, BlipProcessor, BlipForConditionalGeneration, BlipForQuestionAnswering
 from transformers import AutoImageProcessor, UperNetForSemanticSegmentation
@@ -29,8 +30,10 @@ from controlnet_aux import OpenposeDetector, MLSDdetector, HEDdetector
 
 from langchain.agents.initialize import initialize_agent
 from langchain.agents.tools import Tool
-from langchain.chains.conversation.memory import ConversationBufferMemory
+# from langchain.chains.conversation.memory import ConversationBufferMemory
+from langchain.memory import ConversationBufferWindowMemory, ConversationBufferMemory, ConversationTokenBufferMemory
 from langchain.llms.openai import OpenAI
+from langchain.chat_models import ChatOpenAI
 
 # Grounding DINO
 import groundingdino.datasets.transforms as T
@@ -290,7 +293,8 @@ class InstructPix2Pix:
     def __init__(self, device):
         print(f"Initializing InstructPix2Pix to {device}")
         self.device = device
-        self.torch_dtype = torch.float16 if 'cuda' in device else torch.float32
+        # self.torch_dtype = torch.float16 if 'cuda' in device else torch.float32
+        self.torch_dtype = torch.float32
        
         self.pipe = StableDiffusionInstructPix2PixPipeline.from_pretrained("timbrooks/instruct-pix2pix",
                                                                            safety_checker=StableDiffusionSafetyChecker.from_pretrained('CompVis/stable-diffusion-safety-checker'),
@@ -301,7 +305,8 @@ class InstructPix2Pix:
              description="useful when you want to the style of the image to be like the text. "
                          "like: make it look like a painting. or make it like a robot. "
                          "The input to this tool should be a comma separated string of two, "
-                         "representing the image_path and the text. ")
+                         "representing the image_path and the text. "
+                         "Input text should be translated into English if text is written in the other languages.")
     def inference(self, inputs):
         """Change style of image."""
         print("===>Starting InstructPix2Pix Inference")
@@ -330,7 +335,8 @@ class Text2Image:
     @prompts(name="Generate Image From User Input Text",
              description="useful when you want to generate an image from a user input text and save it to a file. "
                          "like: generate an image of an object or something, or generate an image that includes some objects. "
-                         "The input to this tool should be a string, representing the text used to generate image. ")
+                         "The input to this tool should be a string, representing the text used to generate image. "
+                         "Input text should be translated into English if text is written in the other languages.")
     def inference(self, text):
         image_filename = os.path.join('image', f"{str(uuid.uuid4())[:8]}.png")
         prompt = text + ', ' + self.a_prompt
@@ -1227,7 +1233,8 @@ class Inpainting:
 class InfinityOutPainting:
     template_model = True # Add this line to show this is a template model.
     def __init__(self, ImageCaptioning, Inpainting, VisualQuestionAnswering):
-        self.llm = OpenAI(temperature=0)
+        # self.llm = OpenAI(temperature=0)
+        self.llm = ChatOpenAI(temperature=0, model_name="gpt-4")
         self.ImageCaption = ImageCaptioning
         self.inpaint = Inpainting
         self.ImageVQA = VisualQuestionAnswering
@@ -1534,8 +1541,11 @@ class ConversationBot:
                 if e.startswith('inference'):
                     func = getattr(instance, e)
                     self.tools.append(Tool(name=func.name, description=func.description, func=func))
-        self.llm = OpenAI(temperature=0)
-        self.memory = ConversationBufferMemory(memory_key="chat_history", output_key='output')
+        # self.llm = OpenAI(temperature=0, model_name="text-davinci-003")
+        # self.llm = OpenAI(temperature=0, model_name="gpt-4")
+        self.llm = ChatOpenAI(temperature=0, model_name="gpt-4")
+        # self.memory = ConversationBufferMemory(memory_key="chat_history", output_key='output')
+        self.memory = ConversationBufferWindowMemory(memory_key="chat_history", output_key='output', k=3, return_messages=True) # k means the number of history messages to be kept
 
     def init_agent(self, lang):
         self.memory.clear() #clear previous history
@@ -1558,18 +1568,23 @@ class ConversationBot:
             verbose=True,
             memory=self.memory,
             return_intermediate_steps=True,
+            handle_parsing_errors="If you are not confident, please ask questions before output.",
             agent_kwargs={'prefix': PREFIX, 'format_instructions': FORMAT_INSTRUCTIONS,
                           'suffix': SUFFIX}, )
+        # handle_parsing_errors: https://github.com/hwchase17/langchain/issues/1358#issuecomment-1571126502
         return gr.update(visible = True), gr.update(visible = False), gr.update(placeholder=place), gr.update(value=label_clear)
 
     def run_text(self, text, state):
-        self.agent.memory.buffer = cut_dialogue_history(self.agent.memory.buffer, keep_last_n_words=500)
+        # self.agent.memory.buffer = cut_dialogue_history(self.agent.memory.buffer, keep_last_n_words=500)
+        print("input: ", text)
         res = self.agent({"input": text.strip()})
         res['output'] = res['output'].replace("\\", "/")
         response = re.sub('(image/[-\w]*.png)', lambda m: f'![](file={m.group(0)})*{m.group(0)}*', res['output'])
         state = state + [(text, response)]
+        # print(f"\nProcessed run_text, Input text: {text}\nCurrent state: {state}\n----------\n"
+            #   f"【Current Memory】: {self.agent.memory.buffer}")
         print(f"\nProcessed run_text, Input text: {text}\nCurrent state: {state}\n----------\n"
-              f"【Current Memory】: {self.agent.memory.buffer}")
+              f"【Current Memory】: {self.agent.memory.chat_memory.messages}")
         return state, state
 
     def run_image(self, image, state, txt, lang):
@@ -1595,10 +1610,13 @@ class ConversationBot:
         else:
             Human_prompt = f'\nHuman: provide a figure named {image_filename}. The description is: {description}. This information helps you to understand this image, but you should use tools to finish following tasks, rather than directly imagine from my description. If you understand, say \"Received\". \n'
             AI_prompt = "Received.  "
-        self.agent.memory.buffer = self.agent.memory.buffer + Human_prompt + 'AI: ' + AI_prompt
+        # self.agent.memory.buffer = self.agent.memory.buffer + Human_prompt + 'AI: ' + AI_prompt
+        self.agent.memory.chat_memory.messages += [Human_prompt + 'AI: ' + AI_prompt] # https://github.com/hwchase17/langchain/issues/7135
         state = state + [(f"![](file={image_filename})*{image_filename}*", AI_prompt)]
+        # print(f"\nProcessed run_image, Input image: {image_filename}\nCurrent state: {state}\n----------\n"
+            #   f"【Current Memory】: {self.agent.memory.buffer}")
         print(f"\nProcessed run_image, Input image: {image_filename}\nCurrent state: {state}\n----------\n"
-              f"【Current Memory】: {self.agent.memory.buffer}")
+              f"【Current Memory】: {self.agent.memory.chat_memory.messages}")
         return state, state, f'{txt} {image_filename} '
 
 class Logger:
@@ -1624,9 +1642,8 @@ class Logger:
 
 def read_logs():
     sys.stdout.flush()
-    with open("output.log", "r") as f:
+    with open("output.log", "r") as f:   
         return f.read()
-
 
 if __name__ == '__main__':
     sys.stdout = Logger("output.log")
@@ -1640,11 +1657,8 @@ if __name__ == '__main__':
     bot = ConversationBot(load_dict=load_dict)
     with gr.Blocks(css="#chatbot .overflow-y-auto{height:500px}") as demo:
         lang = gr.Radio(choices = ['Chinese','English','Japanese'], value=None, label='Language')
-        chatbot = gr.Chatbot(elem_id="chatbot", label="Visual ChatGPT")
+        chatbot = gr.Chatbot(elem_id="chatbot", label="Visual ChatGPT", height=500)
         state = gr.State([])
-        with gr.Row() as log_view:
-            logs = gr.Textbox(label="Logs", default="Logs will be shown here", lines=20, readonly=True, style={"overflow-y": "auto"})
-            demo.load(read_logs, None, logs, every=1)
         with gr.Row(visible=False) as input_raws:
             with gr.Column(scale=0.7):
                 txt = gr.Textbox(show_label=False, placeholder="Enter text and press enter, or upload an image").style(
@@ -1653,6 +1667,9 @@ if __name__ == '__main__':
                 clear = gr.Button("Clear")
             with gr.Column(scale=0.15, min_width=0):
                 btn = gr.UploadButton(label="🖼️",file_types=["image"])
+        with gr.Row() as log_view:
+            logs = gr.Textbox(label="Logs", default="Logs will be shown here", lines=20, readonly=True)
+            demo.load(read_logs, None, logs, every=1)
 
         lang.change(bot.init_agent, [lang], [input_raws, lang, txt, clear])
         txt.submit(bot.run_text, [txt, state], [chatbot, state])
