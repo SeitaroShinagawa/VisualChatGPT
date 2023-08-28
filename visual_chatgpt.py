@@ -1234,7 +1234,7 @@ class InfinityOutPainting:
     template_model = True # Add this line to show this is a template model.
     def __init__(self, ImageCaptioning, Inpainting, VisualQuestionAnswering):
         # self.llm = OpenAI(temperature=0)
-        self.llm = ChatOpenAI(temperature=0, model_name="gpt-4")
+        self.llm = ChatOpenAI(temperature=0, model_name="gpt-3.5-turbo")
         self.ImageCaption = ImageCaptioning
         self.inpaint = Inpainting
         self.ImageVQA = VisualQuestionAnswering
@@ -1543,7 +1543,7 @@ class ConversationBot:
                     self.tools.append(Tool(name=func.name, description=func.description, func=func))
         # self.llm = OpenAI(temperature=0, model_name="text-davinci-003")
         # self.llm = OpenAI(temperature=0, model_name="gpt-4")
-        self.llm = ChatOpenAI(temperature=0, model_name="gpt-4")
+        self.llm = ChatOpenAI(temperature=0, model_name="gpt-3.5-turbo")
         # self.memory = ConversationBufferMemory(memory_key="chat_history", output_key='output')
         self.memory = ConversationBufferWindowMemory(memory_key="chat_history", output_key='output', k=3, return_messages=True) # k means the number of history messages to be kept
 
