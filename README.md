@@ -1,4 +1,52 @@
-# TaskMatrix
+# VisualChatGPT
+
+This repo is a modified version from original [VisualChatGPT](https://github.com/microsoft/TaskMatrix)
+
+## Modifications:
+- Prepared Docker environment for easy deployment
+- Support Japanese
+- Updated langchain to latest version (v0.0.275)
+- Use ChatOpenAI class (for gpt-3.5-turbo and gpt-4) instead of OpenAI (for text-davinci-003)
+- Use ConversationBufferWindowMemory instead of ConversationBufferMemory to restrict the number of history messages to be kept
+
+[ChatOpenAI and ConversationBufferWindowMemory](https://github.com/SeitaroShinagawa/VisualChatGPT/blob/main/visual_chatgpt.py#L1544)
+```
+```python
+# Before
+# self.llm = OpenAI(temperature=0, model_name="text-davinci-003")
+# self.memory = ConversationBufferMemory(memory_key="chat_history", output_key='output')
+
+# After
+self.llm = ChatOpenAI(temperature=0, model_name="gpt-3.5-turbo")
+self.memory = ConversationBufferWindowMemory(memory_key="chat_history", output_key='output', k=3, return_messages=True) # k means the number of history messages to be kept
+```
+        
+## How to use:
+1. Build docker image
+```bash 
+cd Docker_pytorch2
+bash build.sh
+```
+2. Run docker container
+```bash
+# Edit run_docker.sh to set your root directory
+bash run_docker.sh
+
+```
+3. Install libraries
+```bash
+cd project/Docker_pytorch2
+bash install.sh
+```
+4. Run visual_chatgpt.py
+```bash
+# Edit run_chat.sh to:
+#   set your own OPENAI_API_KEY
+#   set mode="cpu" or mode="cuda:0"
+bash run_chat.sh
+```
+
+# -----------
 
 **TaskMatrix** connects ChatGPT and a series of Visual Foundation Models to enable **sending** and **receiving** images during chatting.
 
