@@ -1,0 +1,39 @@
+FROM nvcr.io/nvidia/cuda:11.7.1-cudnn8-devel-ubuntu20.04 AS base 
+
+# Configurations
+# Variables specified by ARG can be changed using --build-arg in docker build
+# withoug --build-arg, name specified by ARG is used as default
+ARG PYTHON_VERSION="3.8.5"
+
+# Set timezone to avoid Timezone requirement freeze
+ENV TZ=Asia/Tokyo
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# mainly related to installing pyenv
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev \
+    libsqlite3-dev wget curl llvm libncurses5-dev xz-utils tk-dev \
+    libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev \
+    vim libgl1-mesa-dev \
+    && rm -rf /var/lib/apt/lists/* 
+
+# Start container at the home directory
+ENV HOME="/workspace/myspace"
+WORKDIR ${HOME}
+
+# Pyenv install
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && git clone --depth=1 https://github.com/pyenv/pyenv.git .pyenv 
+ENV PYENV_ROOT="${HOME}/.pyenv"
+ENV PATH="${PYENV_ROOT}/shims:${PYENV_ROOT}/bin:${PATH}"
+RUN pyenv install ${PYTHON_VERSION} \
+    && pyenv global ${PYTHON_VERSION} 
+
+#RUN curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/install-poetry.py | python -  \
+RUN curl -sSL https://install.python-poetry.org | python - \ 
+    && /bin/bash -c "echo 'export PATH=${HOME}/.local/bin:$PATH' >> ${HOME}/.bashrc" 
+
+# COPY pyproject.toml ./
+# COPY poetry.lock ./
+# COPY setup_in_docker.sh ./
+
